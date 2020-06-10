@@ -177,14 +177,22 @@ int main(int argc, char *argv[])
 {
     if (argc < 3) usage();
     fprintf(stderr, "lulu C port v0.0\n");
+    luluparam_t lulup;
+    lulup.otutname  = argv[1];
+    lulup.matchtname = argv[2];
+    if (!lulu_init(lulup)) usage();
+}
 
-    char *otufilename = argv[1];
+
+int lulu_init(luluparam_t lulup)
+{
+    const char *otufilename = lulup.otutname;
     otut_t otutable = {NULL, NULL, NULL, NULL, NULL, 0};
     if (!lulu_readotus(otufilename, &otutable)) usage();
     // Compute spread (Number of samles with > 1 read per sample)
     lulu_computespread(&otutable);
 
-    char *matchfilename = argv[2];
+    const char *matchfilename = lulup.matchtname;
     khash_t(matchh) *matchtable = NULL;
     if (!lulu_readmatches(matchfilename, &matchtable)) usage();
     //lulu_printmatches(matchtable, otutable);
@@ -195,6 +203,7 @@ int main(int argc, char *argv[])
 
     lulu_cleanmatchtable(matchtable);
     lulu_cleanotutable(otutable);
+    return 1;
 }
 
 

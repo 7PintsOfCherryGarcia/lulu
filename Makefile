@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS= -Wall -g -std=gnu11 -pedantic
-INC= -Iklib
+INC= -I.
 
 PROG= lulu
 OBJS= main.o
