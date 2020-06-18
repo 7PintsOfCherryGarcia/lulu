@@ -1,0 +1,9 @@
+useDynLib(lulu)
+
+export(lulu,
+       lulu_checkstr,
+       lulu_checkreal,
+       lulu_checkratiotype,
+       lulu_checkfile,
+       lulu_checkpath)
+

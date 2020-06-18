@@ -172,7 +172,6 @@ Library.
 #include "lulu.h"
 
 
-
 int main(int argc, char *argv[])
 {
     if (argc < 3) usage();
@@ -187,7 +186,7 @@ int main(int argc, char *argv[])
 int lulu_init(luluparam_t lulup)
 {
     const char *otufilename = lulup.otutname;
-    otut_t otutable = {NULL, NULL, NULL, NULL, NULL, 0};
+    otut_t otutable = {NULL, NULL, NULL, NULL, NULL};
     if (!lulu_readotus(otufilename, &otutable)) usage();
     // Compute spread (Number of samles with > 1 read per sample)
     lulu_computespread(&otutable);
@@ -199,17 +198,65 @@ int lulu_init(luluparam_t lulup)
 
     //Start main lulu algorithm
     khash_t(parenth) *parents =  lulu_startlulu(otutable, matchtable);
-    lulu_curationtable(otutable, parents);
+    khash_t(otuh) *curationtable = lulu_curationtable(otutable, parents);
 
+    lulu_printcurationtable(curationtable, otutable.ids , kh_size(otutable.sampleids));
+
+    for (khint_t otuk = kh_begin(curationtable); otuk != kh_end(curationtable); ++otuk) {
+        if (kh_exist(curationtable, otuk)) {
+            free(kh_value(curationtable, otuk));
+        }
+    }
+    kh_destroy(otuh, curationtable);
+    kh_destroy(parenth, parents);
     lulu_cleanmatchtable(matchtable);
     lulu_cleanotutable(otutable);
     return 1;
 }
 
 
-void lulu_curationtable(otut_t otutable, khash_t(parenth) *parents)
+int lulu_Rinit(luluparam_t lulup,
+               otut_t *otutable,
+               khash_t(otuh) **curationtable)
 {
-    int numsamples = otutable.numsamples;
+    int ret = 0;
+    const char *otufilename = lulup.otutname;
+    if (!lulu_readotus(otufilename, otutable)) goto exit;
+    // Compute spread (Number of samles with > 1 read per sample)
+    lulu_computespread(otutable);
+
+    const char *matchfilename = lulup.matchtname;
+    khash_t(matchh) *matchtable = NULL;
+    if (!lulu_readmatches(matchfilename, &matchtable)) usage();
+    //lulu_printmatches(matchtable, otutable);
+
+    //Start main lulu algorithm
+    khash_t(parenth) *parents =  lulu_startlulu(*otutable, matchtable);
+    *curationtable = lulu_curationtable(*otutable, parents);
+
+    kh_destroy(parenth, parents);
+    lulu_cleanmatchtable(matchtable);
+    ret = 1;
+    exit:
+        return ret;
+}
+
+
+void lulu_Rclose(khash_t(otuh) *curationtable, otut_t otutable)
+{
+    for (khint_t k = kh_begin(curationtable); k != kh_end(curationtable); ++k) {
+        if (kh_exist(curationtable, k)) {
+            free(kh_value(curationtable, k));
+        }
+    }
+    kh_destroy(otuh, curationtable);
+    lulu_cleanotutable(otutable);
+}
+
+
+khash_t(otuh) *lulu_curationtable(otut_t otutable, khash_t(parenth) *parents)
+{
+    int numsamples = kh_size(otutable.sampleids);
     khash_t(otuh) *curationtable = kh_init(otuh);
     otucount_t otu;
     uint32_t *otucounts;
@@ -248,15 +295,7 @@ void lulu_curationtable(otut_t otutable, khash_t(parenth) *parents)
     }
     fprintf(stderr, "Size of curation table: %u\n", kh_size(curationtable));
 
-
-    lulu_printcurationtable(curationtable, otutable.ids ,numsamples);
-    for (otuk = kh_begin(curationtable); otuk != kh_end(curationtable); ++otuk) {
-        if (kh_exist(curationtable, otuk)) {
-            free(kh_value(curationtable, otuk));
-        }
-    }
-    kh_destroy(otuh, curationtable);
-    kh_destroy(parenth, parents);
+    return curationtable;
 }
 
 
@@ -397,7 +436,7 @@ char lulu_parsematches(match_t *matches,
                        otucount_t otu,
                        khash_t(parenth) *parents)
 {
-    int numsamples = otutable.numsamples;
+    int numsamples = kh_size(otutable.sampleids);
     char success = 0;
     uint32_t djbmatch;
     khint_t k;
@@ -482,6 +521,7 @@ void lulu_sumsort(otut_t *otutable)
 void lulu_computespread(otut_t *otutable)
 {
     otutable->countspersample = malloc(kh_size(otutable->h)*sizeof(otucount_t));
+    int numsamples = kh_size(otutable->sampleids);
     // Loop over otus
     khint_t sk;
     uint32_t otu;
@@ -501,7 +541,7 @@ void lulu_computespread(otut_t *otutable)
             counts = kh_val(otutable->h, k);
 
             // Compute spread and sum over samples
-            for (int j = 0; j < otutable->numsamples; j++) {
+            for (int j = 0; j < numsamples; j++) {
                 sum += *(counts + j);
                 spread += (*(counts + j) >= 1);
             }
@@ -531,18 +571,20 @@ void lulu_computespread(otut_t *otutable)
 
 //Requires otu table be in the format:
 // #OTUid\tsampl1\tsample2\t.......sampleN\n
-uint32_t *lulu_readsampleids(char *samplearray, int *numsamples)
+khash_t(idh) *lulu_readsampleids(char *samplearray)
 {
-    int sampleidx = 0;
+    uint32_t sampleidx = 0;
     char *samplename;
-    uint32_t *sampleids = malloc(1000*sizeof(uint32_t));
+    khash_t(idh) *sampleids = kh_init(idh);
+    khint_t k;
+    int absent;
     samplename = strtok(samplearray, "\t");
-    sampleids[sampleidx++] = djb2hash(samplename);
+    k = kh_put(idh, sampleids, sampleidx, &absent);
+    kh_val(sampleids, k) = strdup(samplename);
     while ( (samplename = strtok(NULL, "\t")) ) {
-        sampleids[sampleidx++] = djb2hash(samplename);
+        k = kh_put(idh, sampleids, sampleidx++, &absent);
+        kh_val(sampleids, k) = strdup(samplename);
     }
-    *numsamples = sampleidx - 1;
-    sampleids = realloc(sampleids, sampleidx*sizeof(uint32_t));
     return sampleids;
 }
 
@@ -585,15 +627,14 @@ int lulu_readotus(const char *filename, otut_t *otutable)
     khash_t(otuh) *h = kh_init(otuh);
     khash_t(idh)  *ids = kh_init(idh);
     if (!(h)) goto exit;
-
-    int firstflag = 0;
     int numsamples;
+    int firstflag = 0;
     while (ks_getuntil(ks, '\n', &str, 0) >= 0) {
         if (!firstflag) {
             //TODO check for errors
-            otutable->sampleids = lulu_readsampleids(str.s, &numsamples);
-            fprintf(stderr, "%d samples\n", numsamples);
-            otutable->numsamples = numsamples;
+            otutable->sampleids = lulu_readsampleids(str.s);
+            fprintf(stderr, "%d samples\n", kh_size(otutable->sampleids));
+            numsamples = kh_size(otutable->sampleids);
             firstflag = 1;
             continue;
         }
